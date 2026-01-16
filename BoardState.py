@@ -27,7 +27,7 @@ class BoardState:
         self.source_value = None
         self.move_dest = None
         self.winner = None
-        self.turn = BoardState.RED_PLAYER
+        self.turn = BoardState.BLACK_PLAYER
         self.shape = shape
         self.cell_side = self.shape[1] // 8
 
