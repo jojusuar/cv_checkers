@@ -21,11 +21,13 @@ class BoardState:
             [ 0, -1,  0, -1,  0, -1,  0, -1],
             [-1,  0, -1,  0, -1,  0, -1,  0]
         ], dtype=int)
+        
         self.grabbing = False
         self.move_source = None
         self.source_value = None
         self.move_dest = None
-        self.turn = BoardState.BLACK_PLAYER
+        self.winner = None
+        self.turn = BoardState.RED_PLAYER
         self.shape = shape
         self.cell_side = self.shape[1] // 8
 
@@ -46,17 +48,20 @@ class BoardState:
         for i, row in enumerate(self.state):
             for j, value in enumerate(row):
                 position = (i, j)
-                if self.pieceIsRed(position):
+                piece_value = self.state[position[0]][position[1]]
+                if self.pieceIsRed(piece_value):
                     piece = self.red_piece
-                elif self.pieceIsBlack(position):
+                elif self.pieceIsBlack(piece_value):
                     piece = self.black_piece
                 else:
                     continue
-                piece_value = self.state[position[0]][position[1]]
                 is_king = self.pieceIsKing(piece_value)
                 pixel_position = (i * self.cell_side, j * self.cell_side)
                 overlay = self.drawPiece(overlay, piece, pixel_position, is_king)
-                
+
+        if self.winner:
+            overlay = self.drawVictoryBanner(overlay, self.winner)
+               
         if thumb and index:
             distance_x = thumb.x - index.x
             distance_y = thumb.y - index.y
@@ -83,14 +88,12 @@ class BoardState:
         return overlay
     
 
-    def pieceIsBlack(self, position):
-        cell_value = self.state[position[0]][position[1]]
-        return cell_value == self.BLACK_PLAYER or cell_value == self.BLACK_KING
+    def pieceIsBlack(self, value):
+        return value == self.BLACK_PLAYER or value == self.BLACK_KING
 
 
-    def pieceIsRed(self, position):
-        cell_value = self.state[position[0]][position[1]]
-        return cell_value == self.RED_PLAYER or cell_value == self.RED_KING
+    def pieceIsRed(self, value):
+        return value == self.RED_PLAYER or value == self.RED_KING
     
 
     def pieceIsKing(self, value):
@@ -98,10 +101,11 @@ class BoardState:
     
 
     def pieceCanBeMoved(self, position):
+        cell_value = self.state[position[0]][position[1]]
         if self.isBlackTurn():
-            return self.pieceIsBlack(position)
+            return self.pieceIsBlack(cell_value)
         elif self.isRedTurn():
-            return self.pieceIsRed(position)
+            return self.pieceIsRed(cell_value)
         return False
     
 
@@ -180,13 +184,62 @@ class BoardState:
         if self.moveIsLegal():
             self.commitMove(overlay, self.move_dest)
             self.turn = BoardState.RED_PLAYER if self.isBlackTurn() else BoardState.BLACK_PLAYER
+            self.winner = self.checkVictoryConditions()
         else:
             self.commitMove(overlay, self.move_source)
         return overlay
+
+
+    def drawVictoryBanner(self, overlay, winner):
+        banner_height = 120
+        banner_y = (self.shape[0] - banner_height) // 2
+        
+        overlay_copy = overlay.copy()
+        cv2.rectangle(overlay_copy, 
+                    (0, banner_y), 
+                    (self.shape[1], banner_y + banner_height), 
+                    (0, 0, 0), 
+                    -1)
+        alpha = 0.7
+        overlay = cv2.addWeighted(overlay, 1 - alpha, overlay_copy, alpha, 0)
+        
+        if winner == self.BLACK_PLAYER:
+            text = "BLACK WINS!"
+            color = (255, 255, 255)
+        elif winner == self.RED_PLAYER:
+            text = "RED WINS!"
+            color = (0, 0, 255)
+        else:
+            return overlay
+        
+        font = cv2.FONT_HERSHEY_TRIPLEX
+        font_scale = 2.5
+        thickness = 5
+        
+        (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+        
+        text_x = (self.shape[1] - text_width) // 2
+        text_y = banner_y + (banner_height + text_height) // 2
+        cv2.putText(overlay, text, (text_x, text_y), font, font_scale, (0, 0, 0), thickness + 3)
+        cv2.putText(overlay, text, (text_x, text_y), font, font_scale, color, thickness)
+        
+        return overlay
+
+
+    def checkVictoryConditions(self):
+        red_count = np.sum(self.state > 0)
+        black_count = np.sum(self.state < 0)
+        
+        if red_count == 0:
+            return self.BLACK_PLAYER
+        elif black_count == 0:
+            return self.RED_PLAYER
+        
+        # Could also check for no valid moves (stalemate) but that's more complex
+        return None
     
     
     def checkKingConditions(self, target_position):
-        print(target_position)
         row, column = target_position
         if self.isRedTurn():
             return row == 7
@@ -200,15 +253,13 @@ class BoardState:
         piece_value = self.source_value
 
         if self.checkKingConditions(target_position):
-            print("PROMOTED")
             piece_value = BoardState.RED_KING if self.isRedTurn() else BoardState.BLACK_KING
         
         self.state[row][column] = piece_value
         
         piece = self.red_piece if self.isRedTurn() else self.black_piece
-        is_king = abs(piece_value) == 2
         position = (row * self.cell_side, column * self.cell_side)
-        overlay = self.drawPiece(overlay, piece, position, is_king)
+        overlay = self.drawPiece(overlay, piece, position, self.pieceIsKing(piece_value))
         
         self.grabbing = False
         self.move_source = None
@@ -224,55 +275,74 @@ class BoardState:
         src_row, src_col = self.move_source
         dest_row, dest_col = self.move_dest
         
-        # Check if destination is within bounds
         if not (0 <= dest_row < 8 and 0 <= dest_col < 8):
             return False
         
-        # Check if destination is empty
         if self.state[dest_row][dest_col] != BoardState.EMPTY:
             return False
         
-        # Check if destination is on a valid dark square
-        if (dest_row + dest_col) % 2 == 0:  # Light square
+        if (dest_row + dest_col) % 2 == 0:
             return False
         
         row_diff = dest_row - src_row
         col_diff = abs(dest_col - src_col)
         
-        # Check if piece is a king
         is_king = self.pieceIsKing(self.source_value)
         
-        # Regular pieces can only move forward
         if not is_king:
-            # Black pieces move down (increasing row)
-            # Red pieces move up (decreasing row)
-            if self.pieceIsBlack(self.move_source) and row_diff <= 0:
+            print(f'Source: {self.move_source}, Dest: {self.move_dest}, row_diff: {row_diff}, col diff: {col_diff}')
+            if self.pieceIsBlack(self.source_value) and row_diff >= 0:
                 return False
-            if self.pieceIsRed(self.move_source) and row_diff >= 0:
+            if self.pieceIsRed(self.source_value) and row_diff <= 0:
                 return False
         
-        # Check for normal move (one diagonal square)
         if abs(row_diff) == 1 and col_diff == 1:
             return True
         
-        # Check for jump move (two diagonal squares)
         if abs(row_diff) == 2 and col_diff == 2:
-            # Find the jumped piece position
             jumped_row = src_row + row_diff // 2
             jumped_col = src_col + (dest_col - src_col) // 2
-            jumped_position = (jumped_row, jumped_col)
+            jumped_value = self.state[jumped_row, jumped_col]
             
-            # Must jump over an opponent's piece
-            if self.turn == BoardState.BLACK_PLAYER:
-                is_opponent = self.pieceIsRed(jumped_position)
+            if self.isBlackTurn():
+                is_opponent = self.pieceIsRed(jumped_value)
             else:
-                is_opponent = self.pieceIsBlack(jumped_position)
+                is_opponent = self.pieceIsBlack(jumped_value)
             
             if not is_opponent:
                 return False
             
-            # Valid jump - remove the jumped piece
             self.state[jumped_row][jumped_col] = BoardState.EMPTY
+            return True
+        
+        if abs(row_diff) == 4 and col_diff == 4:
+            first_jumped_row = src_row + (1 if row_diff > 0 else -1)
+            first_jumped_col = src_col + (1 if dest_col > src_col else -1)
+            first_jumped_value = self.state[first_jumped_row, first_jumped_col]
+            
+            second_jumped_row = src_row + (3 if row_diff > 0 else -3)
+            second_jumped_col = src_col + (3 if dest_col > src_col else -3)
+            second_jumped_value = self.state[second_jumped_row, second_jumped_col]
+            
+            middle_row = src_row + (2 if row_diff > 0 else -2)
+            middle_col = src_col + (2 if dest_col > src_col else -2)
+            
+            if self.state[middle_row, middle_col] != BoardState.EMPTY:
+                return False
+            
+            if self.isBlackTurn():
+                first_is_opponent = self.pieceIsRed(first_jumped_value)
+                second_is_opponent = self.pieceIsRed(second_jumped_value)
+            else:
+                first_is_opponent = self.pieceIsBlack(first_jumped_value)
+                second_is_opponent = self.pieceIsBlack(second_jumped_value)
+            
+            if not (first_is_opponent and second_is_opponent):
+                return False
+            
+            # Valid double jump - remove both jumped pieces
+            self.state[first_jumped_row, first_jumped_col] = BoardState.EMPTY
+            self.state[second_jumped_row, second_jumped_col] = BoardState.EMPTY
             return True
         
         return False
