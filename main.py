@@ -1,5 +1,4 @@
 import cv2
-import numpy as np
 import mediapipe as mp
 from BoardState import BoardState
 from mediapipe.tasks import python
