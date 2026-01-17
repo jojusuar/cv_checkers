@@ -120,42 +120,43 @@ class BoardState:
     def drawPiece(self, overlay, piece, position, is_king=False):
         y, x = position
         h, w, _ = piece.shape
-
+        
         y1 = max(0, y)
         y2 = min(overlay.shape[0], y + h)
         x1 = max(0, x)
         x2 = min(overlay.shape[1], x + w)
-
+        
+        if y2 <= y1 or x2 <= x1:
+            return overlay
+        
         py1 = y1 - y
         py2 = py1 + (y2 - y1)
         px1 = x1 - x
         px2 = px1 + (x2 - x1)
-
-        piece_rgb = piece[py1:py2, px1:px2, :3]
-        alpha = piece[py1:py2, px1:px2, 3] / 255.0
-        roi = overlay[y1:y2, x1:x2]
-
-        for c in range(3):
-            roi[:, :, c] = roi[:, :, c] * (1 - alpha) + piece_rgb[:, :, c] * alpha
-
-        overlay[y1:y2, x1:x2] = roi
         
-        if is_king:
+        piece_rgb = piece[py1:py2, px1:px2, :3]
+        alpha = piece[py1:py2, px1:px2, 3:4] / 255.0
+        roi = overlay[y1:y2, x1:x2]
+        
+        blended = (roi * (1 - alpha) + piece_rgb * alpha).astype(np.uint8)
+        overlay[y1:y2, x1:x2] = blended
+        
+        if is_king and y >= 0 and x >= 0:
             text = "K"
             font = cv2.FONT_HERSHEY_TRIPLEX
             font_scale = 0.6
             thickness = 2
             
             (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
-            
             text_x = x + (w - text_width) // 2
             text_y = y + (h + text_height) // 2
             
-            cv2.putText(overlay, text, (text_x, text_y), font, font_scale, (0, 0, 0), thickness + 2)
-            cv2.putText(overlay, text, (text_x, text_y), font, font_scale, (255, 255, 255), thickness)
+            if 0 <= text_x < overlay.shape[1] and 0 <= text_y < overlay.shape[0]:
+                cv2.putText(overlay, text, (text_x, text_y), font, font_scale, (0, 0, 0), thickness + 2)
+                cv2.putText(overlay, text, (text_x, text_y), font, font_scale, (255, 255, 255), thickness)
         
         return overlay
-
+    
 
     # Módulo de intérprete de jugadas
     def handleGrab(self, overlay, centroid):
@@ -235,7 +236,6 @@ class BoardState:
         elif black_count == 0:
             return self.RED_PLAYER
         
-        # Could also check for no valid moves (stalemate) but that's more complex
         return None
     
     
@@ -290,7 +290,6 @@ class BoardState:
         is_king = self.pieceIsKing(self.source_value)
         
         if not is_king:
-            print(f'Source: {self.move_source}, Dest: {self.move_dest}, row_diff: {row_diff}, col diff: {col_diff}')
             if self.pieceIsBlack(self.source_value) and row_diff >= 0:
                 return False
             if self.pieceIsRed(self.source_value) and row_diff <= 0:
@@ -340,7 +339,6 @@ class BoardState:
             if not (first_is_opponent and second_is_opponent):
                 return False
             
-            # Valid double jump - remove both jumped pieces
             self.state[first_jumped_row, first_jumped_col] = BoardState.EMPTY
             self.state[second_jumped_row, second_jumped_col] = BoardState.EMPTY
             return True

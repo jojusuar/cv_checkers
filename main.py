@@ -29,7 +29,6 @@ webcam.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
 webcam.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
 
 cv2.namedWindow('webcam', cv2.WINDOW_GUI_NORMAL)
-cv2.namedWindow('processed', cv2.WINDOW_GUI_NORMAL)
 while True:
     ret, frame = webcam.read()
 
